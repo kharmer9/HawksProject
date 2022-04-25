@@ -1,0 +1,290 @@
+---
+title: "Statistiacl Analysis and Associated Plots"
+author: "Kevin Harmer"
+output: html_notebook
+---
+
+
+# 1. Libraries
+```{r}
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(stats)
+library(BayesFactor)
+library(BEST)
+library(car)
+library(arules)
+library(arulesViz)
+
+set.seed(1000)
+```
+
+# 2. Importing and Manipulating the Data
+```{r}
+setwd("C:/Users/Kevin/Documents/Post-Graduation/Hawks/")
+rawdata <- data.frame(read_csv('cbb.csv'))
+
+head(rawdata)
+```
+
+```{r}
+data <- rawdata
+data["SEEDSCORE"] <- data["SEED"]
+data$SEEDSCORE[is.na(data["SEEDSCORE"])] <- 17
+data$SEEDSCORE <- 17-data$SEEDSCORE
+#integer rating for each seed (1 being the best at 16 and 0 being the worse representing not making the tournament)
+
+data$TGBL <- data$POSTSEASON #Tournament Games Before Loss
+for (a in c(1:length(data$POSTSEASON))) {
+  if (is.na(data$POSTSEASON[a]) == TRUE) {
+    data$TGBL[a] <- 0}
+  else if (data$POSTSEASON[a] == "R68") {
+    data$TGBL[a] <- 0.5} #play-in games count as half a game
+  else if (data$POSTSEASON[a] == "R64") {
+    data$TGBL[a] <- 1}
+  else if (data$POSTSEASON[a] == "R32") {
+    data$TGBL[a] <- 2}
+  else if (data$POSTSEASON[a] == "S16") {
+    data$TGBL[a] <- 3}
+  else if (data$POSTSEASON[a] == "E8") {
+    data$TGBL[a] <- 4}
+  else if (data$POSTSEASON[a] == "F4") {
+    data$TGBL[a] <- 5}
+  else if (data$POSTSEASON[a] == "2ND") {
+    data$TGBL[a] <- 6}
+  else if (data$POSTSEASON[a] == "Champions") {
+    data$TGBL[a] <- 7} #used to distinguish between runner-ups
+}
+
+data$SEEDSCORE <- as.numeric(data$SEEDSCORE)
+data$TGBL <- as.numeric(data$TGBL)
+data$TEAM <- as.factor(data$TEAM)
+data$CONF <- as.factor(data$CONF)
+
+data$SEED <- as.character(data$SEED)
+data$SEED[is.na(data$SEED)] <- "NTA" #No Tournament Appearance
+data$SEED <- as.factor(data$SEED)
+
+data$POSTSEASON[is.na(data$POSTSEASON)] <- "NTA"
+data$POSTSEASON <- as.factor(data$POSTSEASON)
+#summary(data)
+```
+
+```{r}
+catseed <- data %>% #categorical analysis on seeding
+  transmute("YEAR" = data$YEAR, "TEAM" = data$TEAM,
+            "CONF" = data$CONF, "SCORE" = data$SEEDSCORE)
+
+catresult <- data %>% #categorical analysis on postseason results
+  transmute("YEAR" = data$YEAR, "TEAM" = data$TEAM,
+            "CONF" = data$CONF, "SEED" = data$SEED,
+            "TGBL" = data$TGBL)
+catresult <- catresult[!(catresult$SEED == "NTA"),] #removing all non-tournament teams
+
+numseed <- data[-c(1,2,22,23,24,26)] #numerical analysis on seeding
+
+numresult <- data[-c(1,2,22,23,24)] #numerical analysis on postseason results
+numresult <- numresult[!(numresult$SEEDSCORE == 0),] #removing teams that did not make the tournament
+```
+
+# 3. Some Initial Numeric Plots to Understand Distributions
+
+```{r}
+for (i in c(1:length(numseed))) {
+  hist(numseed[,i], main = colnames(numseed)[i])
+}
+```
+
+SEEDSCORE is heavily skewed, as expected. Most teams do not make the tournament on a given year, leading to the asymmetry.
+
+```{r}
+for (i in c(1:length(numresult))) {
+  hist(numresult[,i], main = colnames(numresult)[i])
+}
+```
+
+# 4. Team and Conference Analysis on Seeding
+```{r}
+#Frequentist ANOVA
+freqcatseed <- aov(SCORE ~ ., data = catseed)
+summary(freqcatseed)
+```
+
+TEAM plays a significant role. CONF also plays a strong role, although not as strong. Still using an alpha level of 0.05, both variables are significant when considering the seeding. YEAR, as expected, is not, but still as composite primary key (along with TEAM).
+
+```{r}
+#Bayesian ANOVA
+bayesCONFseed <- anovaBF(SCORE ~ CONF, data = catseed)
+bayesCONFseed
+bayesTEAMseed <- anovaBF(SCORE ~ TEAM, data = catseed)
+bayesTEAMseed
+#runtime too long when ran together --> cross references all conferences and team interactions
+```
+
+Based on Bayesian results, there is an 8 to 1 chance that these conference and seeding combinations are random and a 9.88 to 1 chance that these teams and seeding combinations are random. Summaries of posterior runs (not shown due to length of output) show that the it is very unlikely that the there is an influential factor in conference and team, allowing us to conclude that these two factors should be used in the predictions of SEED.
+
+# 4. Team, Conference and Seeding Analysis on Tournament Results
+```{r}
+#Frequentist ANOVA
+freqcatresult <- aov(TGBL ~ ., data = catresult)
+summary(freqcatresult)
+```
+
+Frequentist Analysis shows that CONF does not produce a strong indication of tournament success. TEAM is still strong, now support by seeding which appear to make substantial impacts.
+
+```{r}
+#Bayesian ANOVA
+bayesCONFresult <- anovaBF(TGBL ~ CONF, data = catresult)
+bayesCONFresult
+bayesTEAMresult <- anovaBF(TGBL ~ TEAM, data = catresult)
+bayesTEAMresult
+bayesSEEDresult <- anovaBF(TGBL ~ SEED, data = catresult)
+bayesSEEDresult
+```
+
+Due to computer performance issues, the three variables cannot be run in the same model. When ran alone, the Bayesian ANOVA test produces extremely significant results, showing that there is very little chance that these results could happen randomly. Although CONF is significant in this Bayesian analysis, there is a strong chance that is has a large amount of co-linearity with TEAM and SEED, meaning that its place is still in question. To test this theory, a frequentist model will be run with only the CONF prediction variable.
+
+```{r}
+freqCONFresult <- aov(TGBL ~ CONF, data = catresult)
+summary(freqCONFresult)
+```
+
+Re-analysis of the CONF variable shows that it is still valuable in predicting tournament without the influence of TEAM or SEED. Consequently, CONF will be noted as a possible overfitting factor, but will initially be included in the predictive models.
+
+# 5. Numeric Variables Analysis on Seeding
+```{r}
+freqnumseed1 <- lm(SEEDSCORE ~ ., data = numseed)
+summary(freqnumseed1)
+
+vif(freqnumseed1)
+```
+
+Based on an alpha level of 0.05, G, W, ADJOE, ADJDE, BARTHAG, EFG_O, TOR, ORB, FTR, and WAB all play significant roles. The variables come together to produce an R-Squared of 0.6387, meaning that about 64% of the variability in tournament seeding can be accounted for by these variables. The probability that these results occurring randomly is practically 0. So although the model is not super strong, the factors still play significant roles in the outcome. The other factors of variability are likely due to TEAM/CONF or other external factors, like automatic bids, coach impact, or injuries.
+
+The vif function provides colinearity factors for each variable. If our models are over-fitted, the vif results will help indicate possible variables to examine.
+
+```{r}
+freqnumseed2 <- lm(SEEDSCORE ~ .-EFG_D-TORD-DRB-FTRD-X2P_O-X2P_D-X3P_O-X3P_D-ADJ_T, data = numseed)
+summary(freqnumseed2)
+
+vif(freqnumseed2)
+```
+
+
+```{r}
+bayesnumseed1 <- lmBF(SEEDSCORE ~ G+W+ADJOE+ADJDE+BARTHAG+EFG_O+EFG_D+TOR+TORD+
+                       ORB+DRB+FTR+FTRD+X2P_O+X2P_D+X3P_O+X3P_D+ADJ_T+WAB,
+                     data = numseed, posterior = TRUE, iterations = 10000)
+summary(bayesnumseed1)
+
+#r-squared analysis
+hist(1-data.frame(bayesnumseed1)$sig2/var(numseed$SEEDSCORE))
+```
+
+The Bayesian linear model produced the same set of insignificant variables. This is determined by have weights of 0 in between the 2.5% and 97.5% percentiles. The r-squared is similar at 0.64.
+
+```{r}
+bayesnumseed2 <- lmBF(SEEDSCORE ~ G+W+ADJOE+ADJDE+BARTHAG+EFG_O+TOR+ORB+FTR+WAB,
+                     data = numseed, posterior = TRUE, iterations = 10000)
+summary(bayesnumseed2)
+
+#r-squared analysis
+hist(1-data.frame(bayesnumseed2)$sig2/var(numseed$SEEDSCORE))
+```
+
+With a similar R-squared after removing the specific numeric variables from both the frequentist and bayesian linear models, those predicting variables will not be included in the final models. Specifically, the variables to be removed from the data set are: EFG_D, TORD, DRB, FTRD, X2P_O, X2P_D, X3P_O, X3P_D, and ADJ_T.
+
+# 6. Numeric Variables (including seeding as numeric) on Tournament Results
+```{r}
+freqnumresult1 <- lm(TGBL ~ ., data = numresult)
+summary(freqnumresult1)
+
+vif(freqnumresult1)
+```
+
+The model was overall pretty similar in predicting variables to the previous seeding model (decent r-squared at 0.6959). There are a few minor differences, like the addition of EFG_O and switching FTR and FTRD. Yet, the most notable factor is the apparent lack of SEEDSCORE's influence in the model. This is likely due to the colinearity between SEEDSCORE and the other variables. To test this theory, our second model will be solely between seeding and TGBL.
+
+```{r}
+freqnumresult2 <- lm(TGBL ~ SEEDSCORE, data = numresult)
+summary(freqnumresult2)
+```
+
+The influence is extremely significant. This makes sense; the teams that earned good seeding based on season stats are expected to be more likely to do well in the tournament. Next, our final frequentist model will be constructed without influential factors.
+
+```{r}
+freqnumresult3 <- lm(TGBL ~ .-EFG_O-EFG_D-FTR-X2P_O-X2P_D-X3P_O-X3P_D-ADJ_T-SEEDSCORE, data = numresult)
+summary(freqnumresult3)
+
+vif(freqnumresult3)
+```
+
+The resulting model shows that some factors are no longer significant in the resulting conditions. The r-squared dropped to 0.6727, which is reasonable and expected. One more model will be compiled to determine the need for the other insignificant variables based on our alpha level of 0.05.
+
+```{r}
+freqnumresult4 <- lm(TGBL ~ .-EFG_O-EFG_D-FTR-X2P_O-X2P_D-X3P_O-X3P_D-ADJ_T-SEEDSCORE-TOR-TORD-ORB-FTRD, data = numresult)
+summary(freqnumresult4)
+
+vif(freqnumresult4)
+```
+
+This result is much better. With 4 less variables, the model is able to account for nearly the same amount of variability, as recognized by the adjusted r-squared of 0.672. Consequently, this model supports the use of the resulting 7 variables in the machine learning algorithms to come.
+
+```{r}
+bayesnumresult1 <- lmBF(TGBL ~ G+W+ADJOE+ADJDE+BARTHAG+EFG_O+EFG_D+TOR+TORD+
+                       ORB+DRB+FTR+FTRD+X2P_O+X2P_D+X3P_O+X3P_D+ADJ_T+WAB+SEEDSCORE,
+                     data = numresult, posterior = TRUE, iterations = 10000)
+summary(bayesnumresult1)
+
+#r-squared analysis
+hist(1-data.frame(bayesnumresult1)$sig2/var(numresult$TGBL))
+```
+
+Because the results of the initial Bayesian model are very similar to the results of the initial Frequentist model, the same variables from the end result will be analyzed next.
+
+```{r}
+bayesnumresult2 <- lmBF(TGBL ~ G+W+ADJOE+ADJDE+BARTHAG+DRB+WAB,
+                     data = numresult, posterior = TRUE, iterations = 10000)
+summary(bayesnumresult2)
+
+#r-squared analysis
+hist(1-data.frame(bayesnumresult2)$sig2/var(numresult$TGBL))
+```
+
+The final results of the Bayesian regressions are similar to the Frequentist regression.
+
+# 7. Exploratory Analysis: Association Rule Mining
+```{r}
+armseed <- data %>% #categorical analysis on seeding
+  transmute("YEAR" = as.factor(data$YEAR), "TEAM" = data$TEAM,
+            "CONF" = data$CONF, "SEED" = as.factor(data$SEED))
+
+armseedX <- as(armseed, Class = 'transactions')
+armseedX
+```
+
+```{r}
+rule <- apriori(armseedX, #transaction data
+  parameter=list(supp=0.0005, conf=0.95),
+  control=list(verbose=F),
+  appearance=list(default="lhs",rhs=('SEED=NTA')))
+inspect(rule)
+```
+
+```{r}
+armresult <- data %>% #categorical analysis on seeding
+  transmute("YEAR" = as.factor(data$YEAR), "TEAM" = data$TEAM,
+            "CONF" = data$CONF, "SEED" = as.factor(data$SEED),
+            "TGBL" = as.factor(data$TGBL))
+
+armresultX <- as(armresult, Class = 'transactions')
+armresultX
+```
+
+```{r}
+rule <- apriori(armresultX, #transaction data
+  parameter=list(supp=0.001, conf=0.85), #same support and confidence values
+  control=list(verbose=F), #same control set
+  appearance=list(default="lhs",rhs=('TGBL=1')))
+inspect(rule)
+```
